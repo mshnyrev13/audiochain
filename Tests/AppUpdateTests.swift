@@ -95,6 +95,25 @@ private actor UpdateFixture {
         await checker.check(manual:true);checker.presentPending()
         guard case .information?=notices.last else {throw AudioFailure("Manual error not explained")}
         actions.removeFirst()(.later)
+        // A completed automatic lookup can remain queued while audio is running.
+        // Turning the preference off must revoke that notice, but not a manual one.
+        await fixture.configure(try releaseFixture())
+        defaults.removeObject(forKey:AppUpdateChecker.skippedKey)
+        defaults.removeObject(forKey:AppUpdateChecker.attemptKey)
+        defaults.set(true,forKey:AppUpdateChecker.automaticKey)
+        var queuedNotices=0
+        let queued=AppUpdateChecker(current:"0.1.34",defaults:defaults,client:client,canPresent:{idle},
+            presenter:{_,done in queuedNotices+=1;done(.later)})
+        idle=false
+        await queued.check(manual:false)
+        queued.toggleAutomatic(NSMenuItem())
+        idle=true;queued.presentPending()
+        try verifyUpdate(queuedNotices==0,"Disabling automatic updates retained a queued automatic notice")
+        idle=false
+        await queued.check(manual:true)
+        idle=true;queued.presentPending()
+        try verifyUpdate(queuedNotices==1,"Disabling automatic updates suppressed a manual check")
+        queued.stop()
         checker.stop()
         let stoppedCount=await fixture.count();await checker.check(manual:true)
         try verifyUpdate(await fixture.count()==stoppedCount,"Shutdown still starts network work")

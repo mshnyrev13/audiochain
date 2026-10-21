@@ -92,7 +92,7 @@ enum UpdateChoice {case openRelease,later,skip}
     private var timer:Timer?
     private var task:Task<Void,Never>?
     private var observations:Set<AnyCancellable>=[]
-    private var pending:UpdateNotice?
+    private var pending:(notice:UpdateNotice,manual:Bool)?
     private var presenting=false,scheduled=false,stopped=false
     static let automaticKey="AudioChain.updates.automatic"
     static let attemptKey="AudioChain.updates.lastAttempt"
@@ -124,6 +124,7 @@ enum UpdateChoice {case openRelease,later,skip}
     @objc func checkManually() {launch(manual:true)}
     @objc func toggleAutomatic(_ sender:NSMenuItem) {
         automatic.toggle();defaults.set(automatic,forKey:Self.automaticKey);sender.state=automatic ? .on:.off
+        if !automatic,pending?.manual == false {pending=nil}
         if automatic {launch(manual:false)}
     }
     private func launch(manual:Bool) {
@@ -149,11 +150,11 @@ enum UpdateChoice {case openRelease,later,skip}
             guard !stopped,!Task.isCancelled,manual || automatic else {return}
             switch result {
             case .available(let release):
-                if manual || defaults.string(forKey:Self.skippedKey) != release.version {pending = .available(release)}
+                if manual || defaults.string(forKey:Self.skippedKey) != release.version {enqueue(.available(release),manual:manual)}
             case .current:
-                if manual {pending = .information("Установлена актуальная версия","AudioChain \(current). Новых стабильных релизов нет.")}
+                if manual {enqueue(.information("Установлена актуальная версия","AudioChain \(current). Новых стабильных релизов нет."),manual:true)}
             case .noRelease:
-                if manual {pending = .information("Релиз пока не опубликован","На GitHub ещё нет доступного стабильного релиза AudioChain.")}
+                if manual {enqueue(.information("Релиз пока не опубликован","На GitHub ещё нет доступного стабильного релиза AudioChain."),manual:true)}
             }
         } catch is CancellationError {return}
         catch {
@@ -162,16 +163,21 @@ enum UpdateChoice {case openRelease,later,skip}
             if case UpdateFailure.rateLimited=error {detail="GitHub временно ограничил запросы. Повторите позже."}
             else if case UpdateFailure.invalidRelease=error {detail="Новый релиз пока не содержит подходящей сборки AudioChain. Повторите позже."}
             else {detail="Проверьте подключение к интернету и повторите позже."}
-            pending = .information("Не удалось проверить обновления",detail)
+            enqueue(.information("Не удалось проверить обновления",detail),manual:true)
         }
         schedulePresentation()
+    }
+    private func enqueue(_ notice:UpdateNotice,manual:Bool) {
+        // A periodic result must not replace an explicit check awaiting idle.
+        if !manual,pending?.manual == true {return}
+        pending=(notice,manual)
     }
     func schedulePresentation() {
         guard !scheduled,!stopped else {return};scheduled=true
         DispatchQueue.main.async {[weak self] in self?.scheduled=false;self?.presentPending()}
     }
     func presentPending() {
-        guard !stopped,!presenting,canPresent(),let notice=pending else {return}
+        guard !stopped,!presenting,canPresent(),let notice=pending?.notice else {return}
         pending=nil;presenting=true
         presenter(notice) {[weak self] choice in
             guard let self else {return};self.presenting=false

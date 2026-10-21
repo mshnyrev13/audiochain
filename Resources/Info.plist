@@ -7,8 +7,8 @@
 <key>CFBundleExecutable</key><string>AudioChain</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AudioChain.icns</string>
-<key>CFBundleShortVersionString</key><string>0.1.34</string>
-<key>CFBundleVersion</key><string>35</string>
+<key>CFBundleShortVersionString</key><string>0.1.35</string>
+<key>CFBundleVersion</key><string>36</string>
 <key>LSMinimumSystemVersion</key><string>14.2</string>
 <key>NSAudioCaptureUsageDescription</key><string>AudioChain перенаправляет звук выбранного приложения через вашу цепочку AU на выбранное устройство, отключая прямое воспроизведение на время работы.</string>
 <key>NSMicrophoneUsageDescription</key><string>AudioChain передаёт выбранный аудиовход через вашу цепочку AU-эффектов.</string>

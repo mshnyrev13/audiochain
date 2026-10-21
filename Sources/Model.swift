@@ -11,8 +11,18 @@ import CoreAudioKit
 struct AppChoice: Identifiable { let id: String; let name: String }
 
 @MainActor final class AudioModel: ObservableObject {
-    @Published var session = Session.empty { didSet { cachedActiveIDs = nil } }
+    @Published var session = Session.empty { didSet { cachedActiveIDs = nil;cachedPlaybackRoute=nil } }
     private var cachedActiveIDs: Set<UUID>?
+    private var cachedPlaybackRoute:Result<[Block],Error>?
+    func playbackRoute() throws -> [Block] {
+        if let cachedPlaybackRoute {return try cachedPlaybackRoute.get()}
+#if AUDIOCHAIN_DIAGNOSTICS
+        diagnosticPlaybackRouteBuilds += 1
+#endif
+        let result=Result {try session.orderedChain()}
+        cachedPlaybackRoute=result
+        return try result.get()
+    }
     let editHistory = EditHistory()
     private var moveEntry:GraphEditEntry?
     private func editEntry(_ name:String) -> GraphEditEntry {GraphEditEntry(state:GraphEditState(session),selection:selected,name:name)}
@@ -63,6 +73,7 @@ struct AppChoice: Identifiable { let id: String; let name: String }
     }
 #if AUDIOCHAIN_DIAGNOSTICS
     private(set) var diagnosticActiveRouteBuilds = 0
+    private(set) var diagnosticPlaybackRouteBuilds = 0
 #endif
     func moveBlock(_ id: UUID, to point: CGPoint) {
         guard !running, !busy, point.x.isFinite, point.y.isFinite,
@@ -124,7 +135,7 @@ struct AppChoice: Identifiable { let id: String; let name: String }
     func samplePlaybackTelemetry(includeStopped:Bool=false) {
         let now=ProcessInfo.processInfo.systemUptime
         var route:[Block]=[],issue:String?
-        do {route=try session.orderedChain()} catch {issue=error.localizedDescription}
+        do {route=try playbackRoute()} catch {issue=error.localizedDescription}
         let active=Set(route.map(\.id))
         if running || includeStopped {
             let loads=session.blocks.filter {$0.kind == .effect}.map {block in
@@ -204,11 +215,11 @@ struct AppChoice: Identifiable { let id: String; let name: String }
 #if AUDIOCHAIN_DIAGNOSTICS
         diagnosticActiveRouteBuilds += 1
 #endif
-        let ids = Set(((try? session.orderedChain()) ?? []).map(\.id))
+        let ids = Set(((try? playbackRoute()) ?? []).map(\.id))
         cachedActiveIDs = ids
         return ids
     }
-    var hasActiveEffects: Bool { !session.canUseDirectPCM((try? session.orderedChain()) ?? []) }
+    var hasActiveEffects: Bool { !session.canUseDirectPCM((try? playbackRoute()) ?? []) }
     var sourceSummary: String {
         switch session.inputKind {
         case .application: return applications.first(where: { $0.id == session.applicationBundleID })?.name ?? (session.applicationBundleID.isEmpty ? "Приложение не выбрано" : session.applicationBundleID)
@@ -395,7 +406,7 @@ struct AppChoice: Identifiable { let id: String; let name: String }
         return String(format: block.kind == .effect ? "AU: %.2f мс" : "≈ %.2f мс", value)
     }
     private func updateLatencies() {
-        guard running, let route = try? session.orderedChain() else { routeLatency = nil; return }
+        guard running, let route = try? playbackRoute() else { routeLatency = nil; return }
         var values: [UUID: Double] = [:]
         for block in route {
             if block.kind == .effect, let unit = units[block.id] {

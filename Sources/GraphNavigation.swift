@@ -101,28 +101,98 @@ struct GraphSearch:View {
     let zoom:Double
     let close:()->Void
     @State private var query=""
-    @FocusState private var focused:Bool
-    private var matches:[Block] {
-        model.session.blocks.filter {query.isEmpty || title($0).localizedCaseInsensitiveContains(query)}
-    }
+    @State private var highlighted:UUID?
     private func title(_ block:Block)->String {block.kind == .source ? model.session.inputKind.title : block.name}
     var body:some View {
+        let results=model.session.blocks.enumerated().filter {query.isEmpty || title($0.element).localizedCaseInsensitiveContains(query)}
+        let ids=results.map { $0.element.id }
+        let current=highlighted.flatMap {ids.contains($0) ? $0:nil} ?? ids.first
         VStack(alignment:.leading,spacing:8) {
-            TextField("Найти блок…",text:$query).focused($focused).textFieldStyle(.roundedBorder)
-                .onSubmit {if let first=matches.first {choose(first)}}
-            ScrollView {
-                LazyVStack(alignment:.leading,spacing:2) {
-                    ForEach(matches) {block in
-                        Button {choose(block)} label: {
-                            HStack {Text(title(block)).lineLimit(2);Spacer();if block.bypass {Text("OFF").foregroundStyle(.secondary)}}
-                                .frame(maxWidth:.infinity,alignment:.leading).padding(6).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
+            GraphSearchField(text:$query,onMove:{move($0,ids:ids,current:current)},
+                onSubmit:{if let block=results.first(where:{$0.element.id==current})?.element {choose(block)}},onCancel:close)
+                .frame(height:22).onChange(of:query) {_,_ in highlighted=nil}
+            ScrollViewReader {proxy in
+                ScrollView {
+                    LazyVStack(alignment:.leading,spacing:2) {
+                        ForEach(results,id:\.element.id) {item in
+                            let block=item.element
+                            Button {choose(block)} label: {
+                                HStack(spacing:7) {
+                                    Image(systemName:block.kind == .source ? "waveform" : block.kind == .output ? "speaker.wave.2" : "slider.horizontal.3")
+                                        .foregroundStyle(AudioTheme.accent).frame(width:16)
+                                    Text(title(block)).lineLimit(2)
+                                    Spacer(minLength:2)
+                                    if block.bypass {Image(systemName:"power").foregroundStyle(.secondary).help("Эффект обойдён")}
+                                    Text("#\(item.offset+1)").monospacedDigit().foregroundStyle(.secondary)
+                                }.font(.system(size:11)).frame(maxWidth:.infinity,alignment:.leading)
+                                    .padding(7).contentShape(Rectangle())
+                                    .background(block.id==current ? AudioTheme.accent.opacity(0.14):Color.clear,in:RoundedRectangle(cornerRadius:5))
+                            }.buttonStyle(.plain).id(block.id)
+                                .accessibilityLabel("\(title(block)), блок \(item.offset+1)"+(block.bypass ? ", выключен":""))
+                                .accessibilityAddTraits(block.id==current ? [.isSelected]:[])
+                        }
+                        if results.isEmpty {Text("Блоки не найдены").foregroundStyle(.secondary).padding(6)}
                     }
-                    if matches.isEmpty {Text("Блоки не найдены").foregroundStyle(.secondary).padding(6)}
-                }
-            }.frame(maxHeight:240)
-            Text("\(matches.count) из \(model.session.blocks.count) · Enter — перейти").font(.caption).foregroundStyle(.secondary)
-        }.padding(12).frame(width:260).onAppear {focused=true}
+                }.frame(maxHeight:240)
+                    .onChange(of:current) {_,id in if let id {proxy.scrollTo(id,anchor:.center)}}
+            }
+            Text("\(results.count) из \(model.session.blocks.count) · ↑↓ выбор · Enter перейти · Esc закрыть")
+                .font(.system(size:9)).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+        }.padding(12).frame(width:280)
+    }
+    private func move(_ delta:Int,ids:[UUID],current:UUID?) {
+        guard !ids.isEmpty else {return}
+        let index=current.flatMap {ids.firstIndex(of:$0)} ?? 0
+        highlighted=ids[max(0,min(ids.count-1,index+delta))]
     }
     private func choose(_ block:Block) {model.selected=block.id;navigator.reveal(block,zoom:zoom);close()}
+}
+
+// NSTextField consumes arrow commands before SwiftUI key handlers. Intercept
+// only navigation commands; leave text editing, IME and shortcuts to AppKit.
+struct GraphSearchField:NSViewRepresentable {
+    @Binding var text:String
+    let onMove:(Int)->Void
+    let onSubmit:()->Void
+    let onCancel:()->Void
+    func makeCoordinator()->Coordinator {Coordinator(self)}
+    func makeNSView(context:Context)->SearchField {
+        let field=SearchField()
+        field.placeholderString="Найти блок…";field.bezelStyle = .roundedBezel
+        field.font = .systemFont(ofSize:12);field.delegate=context.coordinator
+        field.setAccessibilityLabel("Найти блок")
+        return field
+    }
+    func updateNSView(_ field:SearchField,context:Context) {
+        context.coordinator.parent=self
+        if field.stringValue != text {field.stringValue=text}
+    }
+    final class SearchField:NSTextField {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async {[weak self] in
+                guard let self,let window=self.window else {return}
+                window.makeFirstResponder(self)
+            }
+        }
+    }
+    final class Coordinator:NSObject,NSTextFieldDelegate {
+        var parent:GraphSearchField
+        init(_ parent:GraphSearchField) {self.parent=parent}
+        func controlTextDidChange(_ notification:Notification) {
+            if let field=notification.object as? NSTextField {parent.text=field.stringValue}
+        }
+        func control(_ control:NSControl,textView:NSTextView,doCommandBy command:Selector)->Bool {
+            // Marked text belongs to the input method, including Return/Escape.
+            guard !textView.hasMarkedText() else {return false}
+            switch command {
+            case #selector(NSResponder.moveDown(_:)):parent.onMove(1)
+            case #selector(NSResponder.moveUp(_:)):parent.onMove(-1)
+            case #selector(NSResponder.insertNewline(_:)):parent.onSubmit()
+            case #selector(NSResponder.cancelOperation(_:)):parent.onCancel()
+            default:return false
+            }
+            return true
+        }
+    }
 }

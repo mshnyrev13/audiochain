@@ -119,3 +119,48 @@ func runSignalDiagnosisTests() throws {
         return 0
     } catch {window.close();window.contentView=nil;await model.shutdown();print("FAIL: \(error)");return 1}
 }
+
+@MainActor func runSearchNavigationTest() async -> Int32 {
+    let model=AudioModel(),navigator=GraphNavigator()
+    let component=ComponentID(type:kAudioUnitType_Effect,subtype:kAudioUnitSubType_NBandEQ,manufacturer:kAudioUnitManufacturer_Apple)
+    for i in 0..<32 {model.session.blocks.append(Block(kind:.effect,name:"EQ",x:220+Double(i)*172,y:76,component:component))}
+    var closes=0
+    let host=NSHostingView(rootView:GraphSearch(model:model,navigator:navigator,zoom:1,close:{closes+=1}).preferredColorScheme(.dark))
+    let window=NSWindow(contentRect:NSRect(x:0,y:0,width:280,height:330),styleMask:[.titled],backing:.buffered,defer:false)
+    window.isReleasedWhenClosed=false;window.contentView=host;window.makeKeyAndOrderFront(nil)
+    defer {window.close();window.contentView=nil}
+    func key(_ code:UInt16,_ text:String) async throws {
+        let event=NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:window.windowNumber,context:nil,characters:text,charactersIgnoringModifiers:text,isARepeat:false,keyCode:code)!
+        window.sendEvent(event)
+        try await Task.sleep(nanoseconds:30_000_000)
+    }
+    do {
+        try await Task.sleep(nanoseconds:300_000_000)
+        try await key(125,"\u{f701}");try await key(125,"\u{f701}");try await key(126,"\u{f700}");try await key(36,"\r")
+        try check(model.selected==model.session.blocks[1].id && closes==1,"Search arrow/Enter selection failed: selected=\(String(describing:model.selected)) closes=\(closes) responder=\(String(describing:window.firstResponder))")
+        model.selected=nil
+        guard let editor=window.firstResponder as? NSTextView else {throw AudioFailure("Search field lost keyboard focus")}
+        editor.selectAll(nil);editor.insertText("EQ",replacementRange:editor.selectedRange())
+        try await Task.sleep(nanoseconds:100_000_000)
+        for _ in 0..<31 {try await key(125,"\u{f701}")}
+        host.layoutSubtreeIfNeeded()
+        let directory=URL(fileURLWithPath:auditOutputDirectory(fallback:"Audit/2026-10-21-round6")+"/screenshots")
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        if let bitmap=host.bitmapImageRepForCachingDisplay(in:host.bounds) {
+            host.cacheDisplay(in:host.bounds,to:bitmap)
+            if let data=bitmap.representation(using:.png,properties:[:]) {try data.write(to:directory.appendingPathComponent("search-keyboard.png"))}
+        }
+        try await key(36,"\r")
+        try check(model.selected==model.session.blocks.last!.id && closes==2,"Filtered duplicate-name search did not reach the last result")
+        model.selected=nil
+        editor.selectAll(nil);editor.insertText("No such block",replacementRange:editor.selectedRange())
+        try await Task.sleep(nanoseconds:100_000_000)
+        try await key(125,"\u{f701}");try await key(36,"\r")
+        try check(model.selected==nil && closes==2,"Empty search selected a stale result")
+        try await key(53,"\u{1b}")
+        try check(closes==3,"Escape did not close search")
+        await model.shutdown()
+        print("PASS: native search field arrow/Enter/Escape events, filtering, 32 duplicate names, final result, empty results; own window only")
+        return 0
+    } catch {await model.shutdown();print("FAIL: \(error)");return 1}
+}

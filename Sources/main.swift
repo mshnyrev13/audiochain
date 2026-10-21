@@ -12,6 +12,10 @@ if CommandLine.arguments.contains("--scan-plugins") {
 }
 
 #if AUDIOCHAIN_DIAGNOSTICS
+if CommandLine.arguments.contains("--search-navigation-test") {
+    let app=NSApplication.shared;app.setActivationPolicy(.regular)
+    Task {@MainActor in exit(await runSearchNavigationTest())};app.run();exit(1)
+}
 if CommandLine.arguments.contains("--update-sheet-test") {
     let app=NSApplication.shared;app.setActivationPolicy(.regular)
     Task {@MainActor in exit(await runUpdateSheetTest())};app.run();exit(1)
