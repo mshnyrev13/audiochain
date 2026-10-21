@@ -73,6 +73,22 @@ func runAuditScanTests() async -> Int32 {
             _ = try await PluginCatalog.rescan(arguments: ["--audit-scan-stall"], timeout: 0.2)
             throw AudioFailure("Stalled scanner did not time out")
         } catch let error as AudioFailure { try check(error.message.contains("ожидания"), error.message) }
+        let resistantStart=ProcessInfo.processInfo.systemUptime
+        do {
+            _ = try await PluginCatalog.rescan(arguments:["--audit-scan-ignore-term"],timeout:0.2)
+            throw AudioFailure("SIGTERM-resistant scanner returned success")
+        } catch let error as AudioFailure {try check(error.message.contains("ожидания"),error.message)}
+        let resistantElapsed=ProcessInfo.processInfo.systemUptime-resistantStart
+        print("RESISTANT_SCANNER timeout_elapsed_s=\(resistantElapsed)")
+        try check(resistantElapsed<1.5,"SIGTERM-resistant scanner exceeded the bounded timeout")
+        let resistantCancel=Task {try await PluginCatalog.rescan(arguments:["--audit-scan-ignore-term"],timeout:10)}
+        try await Task.sleep(nanoseconds:300_000_000)
+        let cancelStart=ProcessInfo.processInfo.systemUptime;resistantCancel.cancel()
+        do {_ = try await resistantCancel.value;throw AudioFailure("Resistant cancelled scanner succeeded")}
+        catch is CancellationError {} catch let error as AudioFailure {try check(error.message.contains("отменено"),error.message)}
+        let cancelElapsed=ProcessInfo.processInfo.systemUptime-cancelStart
+        try check(cancelElapsed<1.5,"Resistant scanner cancellation was unbounded")
+        print("RESISTANT_SCANNER cancel_elapsed_s=\(cancelElapsed)")
         let plugins = try await PluginCatalog.rescan()
         try check(!plugins.isEmpty, "Rescan failed after cancellation/timeout")
         print("PASS: scanner cancellation, timeout, child cleanup and successful retry; catalog=\(plugins.count)")

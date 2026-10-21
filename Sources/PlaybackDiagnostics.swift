@@ -14,6 +14,31 @@ struct AULoad:Identifiable,Equatable {
     var invalid:UInt64=0
     var waiting=false
 }
+enum AULoadOrder:String,CaseIterable,Identifiable {
+    case chain="Порядок схемы",budget="Тяжёлые сначала"
+    var id:String {rawValue}
+    func rows(_ loads:[AULoad])->[AULoadRow] {
+        let rows=loads.enumerated().map {AULoadRow(ordinal:$0.offset+1,load:$0.element)}
+        guard self == .budget else {return rows}
+        return rows.sorted {a,b in
+            switch (a.load.measuredBudget,b.load.measuredBudget) {
+            case let (x?,y?) where x != y:return x>y
+            case (_?,nil):return true
+            case (nil,_?):return false
+            default:return a.ordinal<b.ordinal
+            }
+        }
+    }
+}
+struct AULoadRow:Identifiable {
+    let ordinal:Int
+    let load:AULoad
+    var id:UUID {load.id}
+}
+extension AULoad {
+    var measuredBudget:Double? {budgetPercent.flatMap {$0.isFinite && $0>=0 ? $0:nil}}
+}
+
 final class AUProbe {
     let unit:AVAudioUnit
     let pointer:OpaquePointer

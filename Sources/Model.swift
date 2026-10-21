@@ -43,12 +43,13 @@ struct AppChoice: Identifiable { let id: String; let name: String }
             try candidate.validateEditingGraph()
             var current=editEntry(target.name)
             let targetIDs=Set(candidate.blocks.map(\.id))
+            let targetEffects=Set(candidate.blocks.filter {$0.kind == .effect}.map(\.id))
             for index in current.state.blocks.indices where !targetIDs.contains(current.state.blocks[index].id) {
                 if let state=units[current.state.blocks[index].id]?.auAudioUnit.fullState {
                     current.state.blocks[index].state=try PropertyListSerialization.data(fromPropertyList:state,format:.binary,options:0)
                 }
             }
-            var restored=units.filter {id,_ in candidate.blocks.contains {$0.id==id && $0.kind == .effect}}
+            var restored=units.filter {id,_ in targetEffects.contains(id)}
             let token=runToken
             for block in candidate.blocks where block.kind == .effect && restored[block.id] == nil {
                 guard let component=block.component else {throw AudioFailure("Нет идентификатора AU.")}
@@ -60,12 +61,13 @@ struct AppChoice: Identifiable { let id: String; let name: String }
                 }
                 restored[block.id]=unit
             }
-            for id in Array(editors.keys) where !candidate.blocks.contains(where:{$0.id==id}) {
+            editorRequests=editorRequests.filter {targetEffects.contains($0.key)}
+            for id in Array(editors.keys) where !targetIDs.contains(id) {
                 editors[id]?.close();editors[id]?.contentViewController=nil;editors[id]=nil
             }
             units=restored;session=candidate
             for block in candidate.blocks where block.kind == .effect {units[block.id]?.auAudioUnit.shouldBypassEffect=block.bypass}
-            selected=candidate.blocks.contains {$0.id==target.selection} ? target.selection : nil
+            selected=target.selection.flatMap {targetIDs.contains($0) ? $0:nil}
             pendingPort=nil;lastRemovedWire=nil;graphInvalidated=true
             editHistory.commit(redo:redo,current:current)
             status=(redo ? "Повторено: " : "Отменено: ")+target.name
@@ -344,11 +346,16 @@ struct AppChoice: Identifiable { let id: String; let name: String }
             }
         }
     }
+#if AUDIOCHAIN_DIAGNOSTICS
+    var diagnosticEditorLoader:((AVAudioUnit,@escaping(NSViewController?)->Void)->Void)?
+#endif
     private var editors: [UUID: NSWindow] = [:]
+    private var editorRequests:[UUID:UUID]=[:]
     private var shuttingDown = false
     func shutdown() async {
         guard !shuttingDown else { return }
         shuttingDown = true; busy = true
+        editorRequests.removeAll()
         pluginScanTask?.cancel()
         await stop()
         monitoringTimer?.invalidate(); monitoringTimer = nil
@@ -488,6 +495,7 @@ struct AppChoice: Identifiable { let id: String; let name: String }
             catch {status="Не удалось сохранить AU для отмены: \(error.localizedDescription)";return}
         }
         session.wires.removeAll { $0.from == id || $0.to == id }
+        editorRequests[id]=nil
         session.blocks.removeAll { $0.id == id }; editors[id]?.close();editors[id]?.contentViewController=nil;editors[id]=nil; units[id] = nil
         if lastRemovedWire?.from == id || lastRemovedWire?.to == id { lastRemovedWire = nil }
         selected = nil; pendingPort = nil
@@ -532,55 +540,70 @@ struct AppChoice: Identifiable { let id: String; let name: String }
         if let gate = generatorGates[id] { gate.outputVolume = session.blocks[index].bypass ? 0 : 1 }
         else { units[id]?.auAudioUnit.shouldBypassEffect = session.blocks[index].bypass }
     }
-    func openEditor(_ id: UUID) {
+    func openEditor(_ id: UUID, restoring frame:NSRect? = nil) {
         guard !shuttingDown else { return }
         guard let block = session.blocks.first(where: { $0.id == id }) else { return }
         if block.kind != .effect {
-            if let window = editors[id] { window.makeKeyAndOrderFront(nil); return }
-            showEditor(NSHostingController(rootView: BlockSettingsView(model: self, kind: block.kind)), for: id)
+            if let window = editors[id] { if let frame {window.setFrame(frame,display:true)};window.makeKeyAndOrderFront(nil);return }
+            showEditor(NSHostingController(rootView: BlockSettingsView(model: self, kind: block.kind)), for: id, restoring:frame)
             if block.kind == .source { Task { await refreshApps() } }
             return
         }
         guard let unit = units[id] else { return }
-        if let window = editors[id] { window.makeKeyAndOrderFront(nil); return }
-        if !PluginHost.isV3(unit.audioComponentDescription) {
+        if let window = editors[id] { if let frame {window.setFrame(frame,display:true)};window.makeKeyAndOrderFront(nil);return }
+        var asynchronous=PluginHost.isV3(unit.audioComponentDescription)
+#if AUDIOCHAIN_DIAGNOSTICS
+        if diagnosticEditorLoader != nil {asynchronous=true}
+#endif
+        if !asynchronous {
             do {
                 try PluginHost.prepareEditor(unit)
                 if let editor = try PluginHost.legacyEditor(unit.audioUnit) {
-                    showEditor(LegacyEditorController(editor: editor, audioUnit: unit), for: id)
+                    showEditor(LegacyEditorController(editor: editor, audioUnit: unit), for: id, restoring:frame)
                     status = "Открыт собственный AUv2-редактор."
                 } else {
-                    showEditor(NSHostingController(rootView: ParameterEditor(unit: unit)), for: id)
+                    showEditor(NSHostingController(rootView: ParameterEditor(unit: unit)), for: id, restoring:frame)
                     status = "У плагина нет Cocoa-редактора; открыт редактор параметров."
                 }
             } catch { status = "Не удалось открыть редактор: \(error.localizedDescription)" }
             return
         }
+        guard editorRequests[id] == nil else {return}
+        let token=UUID();editorRequests[id]=token
         let request = EditorUnitRequest(unit)
-        unit.auAudioUnit.requestViewController { [weak self] controller in
+        let completion:(NSViewController?)->Void = { [weak self] controller in
             Task { @MainActor in
-                guard let self, !self.shuttingDown, self.units[id] === request.unit else { return }
+                guard let self,self.editorRequests[id]==token else {return}
+                self.editorRequests[id]=nil
+                guard !self.shuttingDown,self.units[id] === request.unit else {return}
                 let viewController: NSViewController
                 if let controller { viewController = controller }
                 else {
                     viewController = NSHostingController(rootView: ParameterEditor(unit: request.unit))
                 }
-                self.showEditor(viewController, for: id)
+                self.showEditor(viewController, for: id, restoring:frame)
             }
         }
+#if AUDIOCHAIN_DIAGNOSTICS
+        if let diagnosticEditorLoader {diagnosticEditorLoader(unit,completion);return}
+#endif
+        unit.auAudioUnit.requestViewController {completion($0)}
     }
-    private func showEditor(_ controller: NSViewController, for id: UUID) {
+    private func showEditor(_ controller: NSViewController, for id: UUID, restoring frame:NSRect? = nil) {
+        if let window=editors[id] {if let frame {window.setFrame(frame,display:true)};window.makeKeyAndOrderFront(nil);return}
         let window = NSWindow(contentViewController: controller)
         window.title = session.blocks.first(where: { $0.id == id })?.name ?? "AU"
         if session.blocks.first(where: { $0.id == id })?.kind != .effect { window.setContentSize(NSSize(width: 440, height: 300)) }
         window.styleMask.formUnion([.titled, .closable, .resizable])
         window.isReleasedWhenClosed = false
         if window.frame.width < 320 || window.frame.height < 160 { window.setContentSize(NSSize(width: 520, height: 400)) }
-        window.center(); window.makeKeyAndOrderFront(nil); editors[id] = window
+        if let frame {window.setFrame(frame,display:false)} else {window.center()}
+        window.makeKeyAndOrderFront(nil);editors[id]=window
     }
     private func retireEffectEditors(_ ids: Set<UUID>) -> [UUID: NSRect] {
         var frames: [UUID: NSRect] = [:]
         for id in ids {
+            editorRequests[id]=nil
             guard let window = editors.removeValue(forKey: id) else { continue }
             if window.isVisible { frames[id] = window.frame }
             window.close()
@@ -592,11 +615,15 @@ struct AppChoice: Identifiable { let id: String; let name: String }
     private func restoreEffectEditors(_ frames: [UUID: NSRect]) {
         let savedStatus = status
         for (id, frame) in frames {
-            openEditor(id)
-            editors[id]?.setFrame(frame, display: true)
+            openEditor(id,restoring:frame)
         }
         status = savedStatus
     }
+#if AUDIOCHAIN_DIAGNOSTICS
+    func diagnosticRebuildEditor(_ id:UUID) {
+        let frames=retireEffectEditors([id]);restoreEffectEditors(frames)
+    }
+#endif
     func start() async {
         guard !running, !busy, !shuttingDown else { return }
         endMove()
@@ -1038,6 +1065,7 @@ struct AppChoice: Identifiable { let id: String; let name: String }
             }
             for window in editors.values { window.close(); window.contentViewController = nil }
             editors.removeAll()
+            editorRequests.removeAll()
             committed = true
             units = loaded; session = candidate; volume = candidate.volume; selected = nil; pendingPort = nil; lastRemovedWire = nil
             editHistory.clear();moveEntry=nil

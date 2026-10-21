@@ -12,6 +12,14 @@ if CommandLine.arguments.contains("--scan-plugins") {
 }
 
 #if AUDIOCHAIN_DIAGNOSTICS
+if CommandLine.arguments.contains("--au-load-ui-tests") {
+    let app=NSApplication.shared;app.setActivationPolicy(.regular)
+    Task {@MainActor in exit(await runAULoadUITests())};app.run();exit(1)
+}
+if CommandLine.arguments.contains("--async-editor-tests") {
+    let app=NSApplication.shared;app.setActivationPolicy(.regular)
+    Task {@MainActor in exit(await runAsyncEditorTests())};app.run();exit(1)
+}
 if CommandLine.arguments.contains("--search-navigation-test") {
     let app=NSApplication.shared;app.setActivationPolicy(.regular)
     Task {@MainActor in exit(await runSearchNavigationTest())};app.run();exit(1)
@@ -137,6 +145,7 @@ if CommandLine.arguments.contains("--audit-realtime") {
     app.run(); exit(1)
 }
 
+if CommandLine.arguments.contains("--audit-scan-ignore-term") {signal(SIGTERM,SIG_IGN);Thread.sleep(forTimeInterval:2);exit(0)}
 if CommandLine.arguments.contains("--audit-scan-stall") { Thread.sleep(forTimeInterval: 60); exit(0) }
 if CommandLine.arguments.contains("--audit-scan-tests") {
     let app = NSApplication.shared

@@ -52,3 +52,57 @@ import AVFoundation
         return 0
     } catch { await model.stop(); print("FAIL: \(error)"); return 1 }
 }
+
+@MainActor func runAsyncEditorTests() async -> Int32 {
+    let model=AudioModel()
+    func controller()->NSViewController {
+        let value=NSViewController();value.view=NSView(frame:NSRect(x:0,y:0,width:400,height:240));return value
+    }
+    var callbacks:[(NSViewController?)->Void]=[]
+    model.diagnosticEditorLoader={_,completion in callbacks.append(completion)}
+    do {
+        guard let plugin=model.plugins.first(where:{$0.component.subtype==kAudioUnitSubType_NBandEQ && $0.component.manufacturer==kAudioUnitManufacturer_Apple}) else {throw AudioFailure("Apple EQ missing")}
+        await model.add(plugin)
+        guard let id=model.selected else {throw AudioFailure(model.status)}
+        let name="Delayed editor \(UUID())";model.session.blocks[model.session.blocks.count-1].name=name
+        for _ in 0..<8 {model.openEditor(id)}
+        try check(callbacks.count==1,"Repeated editor clicks issued \(callbacks.count) asynchronous requests")
+        let completion=callbacks.removeFirst()
+        completion(controller());completion(controller())
+        try await Task.sleep(nanoseconds:150_000_000)
+        try check(NSApp.windows.filter {$0.title==name && $0.isVisible}.count==1,"Duplicate completion opened orphan windows")
+        model.openEditor(id)
+        try check(callbacks.isEmpty,"Existing window requested another editor")
+        guard let initialWindow=NSApp.windows.first(where:{$0.title==name && $0.isVisible}) else {throw AudioFailure("Editor missing")}
+        let screen=NSScreen.main!.visibleFrame
+        initialWindow.setFrame(NSRect(x:screen.minX+80,y:screen.minY+80,width:440,height:300),display:true)
+        let savedFrame=initialWindow.frame
+        model.diagnosticRebuildEditor(id)
+        try check(callbacks.count==1,"Retired editor was not requested again")
+        callbacks.removeFirst()(controller())
+        try await Task.sleep(nanoseconds:100_000_000)
+        try check(NSApp.windows.first(where:{$0.title==name && $0.isVisible})?.frame==savedFrame,"Delayed editor lost saved window position/size")
+        model.remove(id)
+        try check(!NSApp.windows.contains {$0.title==name && $0.isVisible},"Removed block left an editor open")
+        await model.undoEdit()
+        model.openEditor(id)
+        try check(callbacks.count==1,"Restored AU cannot request an editor")
+        let stale=callbacks.removeFirst()
+        model.remove(id);await model.undoEdit()
+        model.openEditor(id)
+        try check(callbacks.count==1,"Old request blocked a replacement AU")
+        stale(controller())
+        try await Task.sleep(nanoseconds:100_000_000)
+        try check(!NSApp.windows.contains {$0.title==name && $0.isVisible},"Stale AU callback reopened a removed editor")
+        let current=callbacks.removeFirst();current(controller())
+        try await Task.sleep(nanoseconds:100_000_000)
+        try check(NSApp.windows.filter {$0.title==name && $0.isVisible}.count==1,"Replacement editor failed")
+        model.remove(id);await model.undoEdit();model.openEditor(id)
+        let shutdownCallback=callbacks.removeFirst()
+        await model.shutdown();shutdownCallback(controller())
+        try await Task.sleep(nanoseconds:100_000_000)
+        try check(!NSApp.windows.contains {$0.title==name && $0.isVisible},"Shutdown callback reopened editor")
+        print("PASS: delayed editor requests coalesced, duplicate completion rejected, existing window reused, delayed frame restoration, removal/undo replacements and shutdown reject stale callbacks; Apple EQ with injected asynchronous provider, not a real AUv3 vendor test")
+        return 0
+    } catch {await model.shutdown();print("FAIL: \(error)");return 1}
+}

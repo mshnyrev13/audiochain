@@ -1,10 +1,12 @@
 import Foundation
+import Darwin
 
 // Only scanner-process lifecycle is locked. This object is never used by audio callbacks.
 private final class PluginScanJob: @unchecked Sendable {
     private let process = Process(), pipe = Pipe(), lock = NSLock()
     private var reason: String?
     private var finished = false
+    private var forcedTermination:DispatchWorkItem?
     init(arguments: [String]) {
         process.executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
         process.arguments = arguments
@@ -14,7 +16,21 @@ private final class PluginScanJob: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard !finished else { return }
         if reason == nil { reason = message }
-        if process.isRunning { process.terminate() }
+        if process.isRunning {
+            process.terminate()
+            // Third-party scanner code may ignore SIGTERM. This timer belongs
+            // only to our child Process; never enumerate or terminate host apps.
+            if forcedTermination == nil {
+                let force=DispatchWorkItem {[weak self] in
+                    guard let self else {return}
+                    self.lock.lock();defer {self.lock.unlock()}
+                    guard !self.finished,self.process.isRunning,self.process.processIdentifier>0 else {return}
+                    _ = Darwin.kill(self.process.processIdentifier,SIGKILL)
+                }
+                forcedTermination=force
+                DispatchQueue.global(qos:.utility).asyncAfter(deadline:.now()+0.5,execute:force)
+            }
+        }
     }
     func run(timeout: TimeInterval) throws -> [PluginChoice] {
         lock.lock()
@@ -25,7 +41,7 @@ private final class PluginScanJob: @unchecked Sendable {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now()+timeout, execute: deadline)
         defer {
             deadline.cancel()
-            lock.lock(); finished = true; lock.unlock()
+            lock.lock(); finished = true; forcedTermination?.cancel();forcedTermination=nil;lock.unlock()
             try? pipe.fileHandleForReading.close()
         }
         var data = Data()
