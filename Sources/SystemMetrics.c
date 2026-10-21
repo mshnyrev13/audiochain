@@ -33,6 +33,7 @@ ACSystemMetrics ACReadSystemMetrics(void) {
         task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&basic, &bn) == KERN_SUCCESS) {
         r.appCPUSeconds = times.user_time.seconds + times.system_time.seconds + basic.user_time.seconds + basic.system_time.seconds +
             (times.user_time.microseconds + times.system_time.microseconds + basic.user_time.microseconds + basic.system_time.microseconds) / 1e6;
+        r.appCPUValid = 1;
     }
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); r.wallSeconds = t.tv_sec + t.tv_nsec / 1e9;
     mach_port_deallocate(mach_task_self(), host);

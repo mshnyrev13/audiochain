@@ -95,6 +95,21 @@ struct GraphMiniMap:View {
             .accessibilityLabel("Мини-карта схемы").help("Нажмите или перетащите на мини-карте для перехода к части схемы")
     }
 }
+enum GraphBlockLookup {
+    static func matches(_ session:Session,query:String)->[(offset:Int,element:Block)] {
+        let text=query.trimmingCharacters(in:.whitespacesAndNewlines)
+        if text.hasPrefix("#") {
+            let digits=text.dropFirst()
+            if !digits.isEmpty,digits.utf8.allSatisfy({48...57 ~= $0}) {
+                guard let number=Int(digits),number>0,number<=session.blocks.count else {return []}
+                return [(number-1,session.blocks[number-1])]
+            }
+        }
+        return session.blocks.enumerated().filter {
+            text.isEmpty || ($0.element.kind == .source ? session.inputKind.title:$0.element.name).localizedCaseInsensitiveContains(text)
+        }
+    }
+}
 struct GraphSearch:View {
     @ObservedObject var model:AudioModel
     let navigator:GraphNavigator
@@ -104,7 +119,7 @@ struct GraphSearch:View {
     @State private var highlighted:UUID?
     private func title(_ block:Block)->String {block.kind == .source ? model.session.inputKind.title : block.name}
     var body:some View {
-        let results=model.session.blocks.enumerated().filter {query.isEmpty || title($0.element).localizedCaseInsensitiveContains(query)}
+        let results=GraphBlockLookup.matches(model.session,query:query)
         let ids=results.map { $0.element.id }
         let current=highlighted.flatMap {ids.contains($0) ? $0:nil} ?? ids.first
         VStack(alignment:.leading,spacing:8) {
@@ -158,7 +173,7 @@ struct GraphSearchField:NSViewRepresentable {
     func makeCoordinator()->Coordinator {Coordinator(self)}
     func makeNSView(context:Context)->SearchField {
         let field=SearchField()
-        field.placeholderString="Найти блок…";field.bezelStyle = .roundedBezel
+        field.placeholderString="Название или #номер";field.bezelStyle = .roundedBezel
         field.font = .systemFont(ofSize:12);field.delegate=context.coordinator
         field.setAccessibilityLabel("Найти блок")
         return field

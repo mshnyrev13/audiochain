@@ -37,7 +37,7 @@ struct TelemetryDiagnostics: View {
                         .help("Оценка по очереди, HAL и заявленным задержкам AU/SRC. Это не аппаратный loopback. Параллельные ветки суммируются без выравнивания.")
                 }
             }.monospacedDigit().foregroundStyle(.secondary)
-                .help("CPU AudioChain: 100% — одно ядро. AUv3-процессы учитываются в общей нагрузке Mac. RAM процесса — phys_footprint.")
+                .help("CPU AudioChain: 100% — одно ядро. AUv3-процессы учитываются в общей нагрузке Mac. RAM процесса — phys_footprint. «—» — измерение пока недоступно.")
         }
         .font(.system(size:10)).textSelection(.enabled)
         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal,12).padding(.vertical,8)

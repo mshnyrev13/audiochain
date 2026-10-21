@@ -6,9 +6,12 @@ struct BlockSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Label(kind == .source ? "Источник" : "Выход", systemImage: kind == .source ? "waveform" : "speaker.wave.2").font(.headline)
-            if kind == .source { SourceSettings(model: model) }
-            else { OutputSettings(model: model) }
-            Spacer(minLength: 0)
+            ScrollView(.vertical) {
+                Group {
+                    if kind == .source {SourceSettings(model:model)}
+                    else {OutputSettings(model:model)}
+                }.frame(maxWidth:.infinity,alignment:.leading).padding(.trailing,4)
+            }.scrollIndicators(.visible)
             if model.running { Text("Для изменения устройства или буфера нажмите Стоп.").font(.caption).foregroundStyle(.secondary) }
         }.padding(20).frame(minWidth: 400, minHeight: 260).controlSize(.small).preferredColorScheme(.dark)
     }

@@ -35,8 +35,7 @@ final class DisplayTelemetry: ObservableObject {
 }
 struct ResourceMonitor {
     private var previous: ACSystemMetrics? = nil
-    mutating func sample() -> ResourceSnapshot {
-        let current = ACReadSystemMetrics()
+    mutating func sample(_ current:ACSystemMetrics = ACReadSystemMetrics()) -> ResourceSnapshot {
         var result = ResourceSnapshot()
         if current.memoryValid != 0 { result.memoryUsed = min(current.memoryUsed, current.memoryTotal); result.memoryTotal = current.memoryTotal }
         if current.appValid != 0 { result.appMemory = current.appMemory }
@@ -45,7 +44,12 @@ struct ResourceMonitor {
                 result.cpu = min(100, max(0, Double(current.cpuBusy - previous.cpuBusy) / Double(current.cpuTotal - previous.cpuTotal) * 100))
             }
             let dt = current.wallSeconds - previous.wallSeconds
-            if dt > 0 { result.appCPU = max(0, (current.appCPUSeconds - previous.appCPUSeconds) / dt * 100) }
+            if current.appCPUValid != 0,previous.appCPUValid != 0,dt.isFinite,dt>0,
+               current.appCPUSeconds.isFinite,previous.appCPUSeconds.isFinite,
+               previous.appCPUSeconds>=0,current.appCPUSeconds>=previous.appCPUSeconds {
+                let value=(current.appCPUSeconds-previous.appCPUSeconds)/dt*100
+                if value.isFinite {result.appCPU=value}
+            }
         }
         previous = current
         return result

@@ -13,9 +13,12 @@ import SwiftUI
         try check(sorted.map(\.ordinal)==[8,3,1,4,2,5,6,7],"Budget sort is unstable or accepts invalid values")
         try check(sorted[0].load.measuredBudget==120 && sorted[1].load.measuredBudget==80,"Budget is normalized or capped in data")
         try check(AULoadOrder.budget.rows([]).isEmpty,"Empty load panel failed")
+        var numbered=loads
+        for i in numbered.indices {numbered[i].blockNumber=i+3}
+        try check(AULoadOrder.budget.rows(numbered).map(\.ordinal)==[10,5,3,6,4,7,8,9],"Explicit document numbers lost in sort")
         let telemetry=DisplayTelemetry()
         telemetry.hasRunMeasurements=true;telemetry.playbackRunning=false
-        telemetry.auLoads=[loads[0],loads[1],loads[2],loads[3],loads[7]]
+        telemetry.auLoads=[numbered[0],numbered[1],numbered[2],numbered[3],numbered[7]]
         telemetry.resources.appMemory=150_000_000;telemetry.resources.appCPU=12.3
         let host=NSHostingView(rootView:AULoadPanel(telemetry:telemetry,initialOrder:.budget))
         let window=NSWindow(contentRect:NSRect(x:0,y:0,width:510,height:380),styleMask:[.titled],backing:.buffered,defer:false)

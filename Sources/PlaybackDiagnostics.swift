@@ -13,19 +13,20 @@ struct AULoad:Identifiable,Equatable {
     var errors:UInt64=0
     var invalid:UInt64=0
     var waiting=false
+    var blockNumber:Int? = nil
 }
 enum AULoadOrder:String,CaseIterable,Identifiable {
     case chain="Порядок схемы",budget="Тяжёлые сначала"
     var id:String {rawValue}
     func rows(_ loads:[AULoad])->[AULoadRow] {
-        let rows=loads.enumerated().map {AULoadRow(ordinal:$0.offset+1,load:$0.element)}
+        let rows=loads.enumerated().map {AULoadRow(ordinal:$0.element.blockNumber ?? $0.offset+1,load:$0.element,sourceIndex:$0.offset)}
         guard self == .budget else {return rows}
         return rows.sorted {a,b in
             switch (a.load.measuredBudget,b.load.measuredBudget) {
             case let (x?,y?) where x != y:return x>y
             case (_?,nil):return true
             case (nil,_?):return false
-            default:return a.ordinal<b.ordinal
+            default:return a.sourceIndex<b.sourceIndex
             }
         }
     }
@@ -33,6 +34,7 @@ enum AULoadOrder:String,CaseIterable,Identifiable {
 struct AULoadRow:Identifiable {
     let ordinal:Int
     let load:AULoad
+    let sourceIndex:Int
     var id:UUID {load.id}
 }
 extension AULoad {

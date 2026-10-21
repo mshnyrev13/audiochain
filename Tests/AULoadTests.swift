@@ -26,6 +26,9 @@ import AVFoundation
         try await Task.sleep(nanoseconds:3_000_000_000)
         model.samplePlaybackTelemetry()
         try check(model.telemetry.auLoads.count==4,"AU load rows missing")
+        for row in AULoadOrder.budget.rows(model.telemetry.auLoads) {
+            try check(row.ordinal==model.session.blocks.firstIndex(where:{$0.id==row.id})!+1,"Actual AU number differs from graph/search")
+        }
         for load in model.telemetry.auLoads {
             try check(load.calls>0 && load.meanMS != nil && load.budgetPercent != nil && load.invalid==0 && load.errors==0,"AU probe failed: \(load)")
             print("AU_LOAD name=\(load.name) mean_ms=\(load.meanMS!) peak_ms=\(load.peakMS!) budget_percent=\(load.budgetPercent!) calls=\(load.calls)")

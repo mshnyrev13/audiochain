@@ -89,7 +89,7 @@ private struct AULoadRowView:View {
         VStack(alignment:.leading,spacing:4) {
             HStack {
                 Text("#\(row.ordinal)").font(.system(size:9)).foregroundStyle(.secondary)
-                    .help("Номер AU в списке блоков схемы; сохраняется при сортировке")
+                    .help("Номер блока схемы на момент измерения. Переход в поиске: #номер.")
                 Text(load.name+(load.bypass ? " · обход":"")).lineLimit(1).frame(maxWidth:.infinity,alignment:.leading).help(load.name)
                 Text(load.meanMS.map {String(format:"%.3f",$0)} ?? "—").frame(width:75,alignment:.trailing)
                 Text(load.peakMS.map {String(format:"%.3f",$0)} ?? "—").frame(width:62,alignment:.trailing)

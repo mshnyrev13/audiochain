@@ -153,12 +153,17 @@ func runSignalDiagnosisTests() throws {
         try await key(36,"\r")
         try check(model.selected==model.session.blocks.last!.id && closes==2,"Filtered duplicate-name search did not reach the last result")
         model.selected=nil
+        editor.selectAll(nil);editor.insertText("#34",replacementRange:editor.selectedRange())
+        try await Task.sleep(nanoseconds:100_000_000)
+        try await key(36,"\r")
+        try check(model.selected==model.session.blocks.last!.id && closes==3,"Exact-number search selected the wrong duplicate")
+        model.selected=nil
         editor.selectAll(nil);editor.insertText("No such block",replacementRange:editor.selectedRange())
         try await Task.sleep(nanoseconds:100_000_000)
         try await key(125,"\u{f701}");try await key(36,"\r")
-        try check(model.selected==nil && closes==2,"Empty search selected a stale result")
+        try check(model.selected==nil && closes==3,"Empty search selected a stale result")
         try await key(53,"\u{1b}")
-        try check(closes==3,"Escape did not close search")
+        try check(closes==4,"Escape did not close search")
         await model.shutdown()
         print("PASS: native search field arrow/Enter/Escape events, filtering, 32 duplicate names, final result, empty results; own window only")
         return 0

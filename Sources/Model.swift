@@ -140,8 +140,11 @@ struct AppChoice: Identifiable { let id: String; let name: String }
         do {route=try playbackRoute()} catch {issue=error.localizedDescription}
         let active=Set(route.map(\.id))
         if running || includeStopped {
-            let loads=session.blocks.filter {$0.kind == .effect}.map {block in
-                auProbes[block.id]?.sample(block,cumulative:includeStopped) ?? AULoad(id:block.id,name:block.name,bypass:block.bypass,active:active.contains(block.id))
+            let loads=session.blocks.enumerated().compactMap {index,block -> AULoad? in
+                guard block.kind == .effect else {return nil}
+                var load=auProbes[block.id]?.sample(block,cumulative:includeStopped) ?? AULoad(id:block.id,name:block.name,bypass:block.bypass,active:active.contains(block.id))
+                load.blockNumber=index+1
+                return load
             }
             if loads != telemetry.auLoads {telemetry.auLoads=loads}
             let stats=transportStatistics
