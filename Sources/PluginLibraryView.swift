@@ -1,7 +1,50 @@
 import SwiftUI
+import Combine
 
-struct PluginLibraryView: View {
-    @ObservedObject var model: AudioModel
+// Subscribe only to inputs used by the library. Graph edits and selection
+// must not decode favorites or filter the catalogue again.
+@MainActor final class PluginLibraryState: ObservableObject {
+    @Published private(set) var plugins: [PluginChoice] = []
+    @Published private(set) var refreshing = false
+    @Published private(set) var canAdd = true
+    private var subscriptions = Set<AnyCancellable>()
+    init(model: AudioModel) {
+        model.$plugins.removeDuplicates().sink { [weak self] in self?.plugins = $0 }.store(in:&subscriptions)
+        model.$refreshingPlugins.removeDuplicates().sink { [weak self] in self?.refreshing = $0 }.store(in:&subscriptions)
+        model.$running.combineLatest(model.$busy).map { !$0 && !$1 }.removeDuplicates()
+            .sink { [weak self] in self?.canAdd = $0 }.store(in:&subscriptions)
+    }
+}
+
+enum PluginLibraryFilter {
+    static func visible(_ plugins:[PluginChoice], favorites:Set<String>, search:String, category:PluginCategory, favoritesOnly:Bool) -> [PluginChoice] {
+        let query=search.trimmingCharacters(in:.whitespacesAndNewlines)
+        var starred:[PluginChoice]=[], other:[PluginChoice]=[]
+        for plugin in plugins where category.contains(plugin) {
+            let favorite=favorites.contains(plugin.id)
+            guard (!favoritesOnly || favorite) && (query.isEmpty || plugin.name.localizedCaseInsensitiveContains(query) || plugin.manufacturer.localizedCaseInsensitiveContains(query)) else {continue}
+            if favorite {starred.append(plugin)} else {other.append(plugin)}
+        }
+        return starred+other
+    }
+    static func emptyMessage(_ plugins:[PluginChoice], favorites:Set<String>, favoritesOnly:Bool) -> String {
+        if favoritesOnly && !plugins.contains(where:{favorites.contains($0.id)}) {
+            return "Нажмите звёздочку рядом с AU, чтобы добавить его в избранное."
+        }
+        return "Ничего не найдено. Попробуйте другое название или категорию."
+    }
+}
+
+struct PluginLibraryView: View, Equatable {
+    // The state object owns all changing library inputs. Parent graph redraws
+    // may reuse this view; its own search/favorites/state updates still render.
+    static func == (lhs:Self,rhs:Self) -> Bool {lhs.model === rhs.model}
+    let model: AudioModel
+    @StateObject private var library: PluginLibraryState
+    init(model:AudioModel) {
+        self.model=model
+        _library=StateObject(wrappedValue:PluginLibraryState(model:model))
+    }
     @AppStorage("AudioChain.ui.favoriteAUIds") private var favoriteData = "[]"
     @State private var search = ""
     @State private var category = PluginCategory.all
@@ -9,21 +52,17 @@ struct PluginLibraryView: View {
     private var favorites: Set<String> {
         Set((try? JSONDecoder().decode([String].self,from:Data(favoriteData.utf8))) ?? [])
     }
-    private func visiblePlugins(favorites ids:Set<String>) -> [PluginChoice] {
-        let filtered = model.plugins.filter {
-            category.contains($0) && (!favoritesOnly || ids.contains($0.id)) &&
-            (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.manufacturer.localizedCaseInsensitiveContains(search))
-        }
-        return filtered.filter {ids.contains($0.id)} + filtered.filter {!ids.contains($0.id)}
-    }
     private func toggleFavorite(_ id: String) {
         var ids = favorites
         if ids.contains(id) {ids.remove(id)} else {ids.insert(id)}
         if let data = try? JSONEncoder().encode(ids.sorted()), let text = String(data:data,encoding:.utf8) {favoriteData = text}
     }
     var body: some View {
+#if AUDIOCHAIN_DIAGNOSTICS
+        let _ = UIAuditCounters.library(plugins:library.plugins.count,canAdd:library.canAdd,refreshing:library.refreshing)
+#endif
         let ids = favorites
-        let visible = visiblePlugins(favorites:ids)
+        let visible = PluginLibraryFilter.visible(library.plugins,favorites:ids,search:search,category:category,favoritesOnly:favoritesOnly)
         VStack(alignment:.leading,spacing:10) {
             HStack(spacing:8) {
                 Text("Библиотека AU").font(.system(size:11,weight:.semibold))
@@ -33,7 +72,7 @@ struct PluginLibraryView: View {
                     .help(favoritesOnly ? "Показать все AU" : "Только избранные AU")
                     .accessibilityLabel("Только избранные AU").accessibilityValue(favoritesOnly ? "Да" : "Нет")
                 Button {Task {await model.rescanPlugins()}} label: {Image(systemName:"arrow.clockwise")}
-                    .help("Обновить AU и папки Components").accessibilityLabel("Обновить список AU").disabled(model.refreshingPlugins)
+                    .help("Обновить AU и папки Components").accessibilityLabel("Обновить список AU").disabled(library.refreshing)
             }.buttonStyle(.plain).font(.system(size:11))
             HStack(spacing:6) {
                 Image(systemName:"magnifyingglass").foregroundStyle(.secondary)
@@ -54,19 +93,23 @@ struct PluginLibraryView: View {
                 Spacer(minLength:0)
                 Text("\(visible.count)").monospacedDigit().foregroundStyle(.secondary)
             }.font(.system(size:10))
-            if model.refreshingPlugins {
+            if library.refreshing {
                 HStack {ProgressView().controlSize(.mini);Text("Обновление…");Spacer();Button("Отмена") {model.cancelPluginRescan()}}
                     .font(.system(size:10)).buttonStyle(.plain)
             }
             ScrollView {
                 LazyVStack(alignment:.leading,spacing:2) {
                     ForEach(visible) {plugin in
-                        PluginLibraryRow(plugin:plugin,favorite:ids.contains(plugin.id),canAdd:!model.running && !model.busy,
+                        PluginLibraryRow(plugin:plugin,favorite:ids.contains(plugin.id),canAdd:library.canAdd,
                             add:{Task {await model.add(plugin)}},toggleFavorite:{toggleFavorite(plugin.id)})
                     }
                     if visible.isEmpty {
-                        Text(favoritesOnly ? "Нажмите звёздочку рядом с AU, чтобы добавить его в избранное." : "Ничего не найдено. Попробуйте другое название или категорию.")
+                        Text(PluginLibraryFilter.emptyMessage(library.plugins,favorites:ids,favoritesOnly:favoritesOnly))
                             .font(.system(size:10)).foregroundStyle(.secondary).padding(.vertical,12)
+                        if !search.isEmpty || category != .all || favoritesOnly {
+                            Button("Сбросить фильтры") {search="";category = .all;favoritesOnly=false}
+                                .font(.system(size:10)).buttonStyle(CompactButtonStyle())
+                        }
                     }
                 }
             }

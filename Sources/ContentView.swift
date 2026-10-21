@@ -25,7 +25,7 @@ struct ContentView: View {
             Divider().overlay(AudioTheme.border)
             HStack(spacing: 0) {
                 if libraryVisible {
-                    PluginLibraryView(model:model)
+                    PluginLibraryView(model:model).equatable()
                     Divider().overlay(AudioTheme.border)
                 }
                 GraphCanvas(model:model,initialZoom:initialZoom,initialSelectedWire:initialSelectedWire,initialMap:initialMap)

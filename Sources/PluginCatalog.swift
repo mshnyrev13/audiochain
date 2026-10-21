@@ -15,7 +15,7 @@ enum PluginCategory: String, CaseIterable, Identifiable {
     }
 }
 
-struct PluginChoice: Identifiable, Codable {
+struct PluginChoice: Identifiable, Codable, Equatable {
     let id: String
     let name: String
     let manufacturer: String

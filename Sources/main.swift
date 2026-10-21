@@ -12,6 +12,10 @@ if CommandLine.arguments.contains("--scan-plugins") {
 }
 
 #if AUDIOCHAIN_DIAGNOSTICS
+if CommandLine.arguments.contains("--library-update-tests") {
+    let app=NSApplication.shared;app.setActivationPolicy(.regular)
+    Task {@MainActor in exit(await runLibraryUpdateTests())};app.run();exit(1)
+}
 if CommandLine.arguments.contains("--resource-monitor-tests") {
     do {try runResourceMonitorTests();exit(0)} catch {print("FAIL: \(error)");exit(1)}
 }

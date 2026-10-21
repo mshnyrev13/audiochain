@@ -2,6 +2,13 @@ import SwiftUI
 import Combine
 
 @MainActor enum UIAuditCounters {
+    static var libraryBodies = 0
+    static var libraryCanAdd = true
+    static var libraryRefreshing = false
+    static var libraryCount = 0
+    static func library(plugins:Int,canAdd:Bool,refreshing:Bool) {
+        libraryBodies += 1;libraryCount=plugins;libraryCanAdd=canAdd;libraryRefreshing=refreshing
+    }
     static var graphBodies = 0
     static var meterBodies = 0
     static var inputPeak = -Double.infinity
