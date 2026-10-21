@@ -1,0 +1,46 @@
+name: Publish AudioChain release
+
+on:
+  push:
+    branches: [main]
+    paths: [Distribution/release.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audiochain-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate version and installer checksum
+        id: verify
+        run: python3 scripts/verify-github-release.py
+      - name: Publish verified installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.verify.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.verify.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/release-draft" 2>/dev/null; then
+            if [[ "$(cat "$RUNNER_TEMP/release-draft")" != true ]]; then
+              echo "This version is already published. Increment the version instead of overwriting it."
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --draft --target "$GITHUB_SHA" --title "AudioChain $RELEASE_VERSION" --notes-file Distribution/NOTES.md
+          fi
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/audiochain-release/AudioChain-$RELEASE_VERSION.dmg" "$RUNNER_TEMP/audiochain-release/SHA256SUMS" --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest

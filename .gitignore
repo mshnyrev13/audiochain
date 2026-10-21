@@ -1,0 +1,15 @@
+build/
+build-*/
+.DS_Store
+Audit/
+Design/
+Features/
+Cleanup/
+Updates/
+Publishing/
+*.audiochain.json
+.env
+.env.*
+*.p12
+*.pem
+__pycache__/
